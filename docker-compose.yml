@@ -50,7 +50,7 @@ services:
       - data-infrastructure-shared-network
       - test
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - db-data-dev:/var/lib/postgresql/data
       - db-logs-dev:/var/log/postgres
@@ -118,8 +118,11 @@ services:
       - SERVICES=s3,sts,iam
       - EXTRA_CORS_ALLOWED_ORIGINS=http://dataworkspace.test:8000
       - DATA_DIR=/tmp/localstack/data
+      #- LEGACY_DIRECTORIES=1
+      #- LOCALSTACK_VOLUME_DIR="./.localstack"
     volumes:
-      - "./.localstack:/tmp/localstack"
+      - ${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack
+      #- "./.localstack:/tmp/localstack"
 
   # Superset profile services
 
