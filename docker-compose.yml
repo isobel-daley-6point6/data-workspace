@@ -188,6 +188,9 @@ services:
       - "testvisualisation-b.dataworkspace.test:127.0.0.1"
       - "api.ecr.my-region-1.amazonaws.com:127.0.0.1"
       - "mlflow--data-science.dataworkspace.test:127.0.0.1"
+      - "postgres.dataworkspace.test:127.0.0.1"
+      - "arango.dataworkspace.test:127.0.0.1"
+
     volumes:
       - db-logs-dev:/var/log/postgres
       - test-results:/test-results
