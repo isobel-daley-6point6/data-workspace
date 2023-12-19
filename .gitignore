@@ -88,3 +88,4 @@ dataworkspace/dataworkspace/static/*.css.map
 .local
 .localstack
 test-results/
+volume/
