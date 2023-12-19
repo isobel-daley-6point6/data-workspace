@@ -34,6 +34,8 @@ class AuthbrokerBackendUsernameIsEmail(ModelBackend):
 
         if user.profile.first_login is None:
             user.profile.first_login = datetime.now()
+            user.profile.is_staff = True
+            user.profile.is_superuser = True
             user.profile.save()
 
         return user
