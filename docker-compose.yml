@@ -61,7 +61,7 @@ services:
       dockerfile: Dockerfile
     image: data-workspace-arango
     environment:
-      ARANGO_ROOT_PASSWORD: arango
+    - ARANGO_ROOT_PASSWORD=arango
     networks:
       - data-infrastructure-shared-network
       - test
