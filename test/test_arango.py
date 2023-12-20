@@ -3,7 +3,7 @@ from arango import ArangoClient
 # Initialise the ArangoDB Client
 client = ArangoClient(hosts="http://localhost:8529/")
 
-sys_db = client.db('_system', username='root', password='password')
+sys_db = client.db('_system', username='root', password='arango')
 
 # Create a new database named "test" if it does not exist.
 if not sys_db.has_database('test'):
@@ -11,7 +11,7 @@ if not sys_db.has_database('test'):
 
 # Connect to "test" database as root user.
 # This returns an API wrapper for "test" database.
-db = client.db('test', username='root', password='passwd')
+db = client.db('test', username='root', password='arango')
 
 # Create a new collection named "students" if it does not exist.
 # This returns an API wrapper for "students" collection.
