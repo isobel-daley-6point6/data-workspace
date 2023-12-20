@@ -62,6 +62,7 @@ async def async_main():
     admin_root = env["UPSTREAM_ROOT"]
     superset_root = env["SUPERSET_ROOT"]
     flower_root = env["FLOWER_ROOT"]
+    arango_root = env["ARANGO_ROOT"]
     hawk_senders = env["HAWK_SENDERS"]
     sso_base_url = env["AUTHBROKER_URL"]
     sso_host = URL(sso_base_url).host
@@ -203,6 +204,17 @@ async def async_main():
             )
             + downstream_request["sso_profile_headers"]
         )
+    
+    def arango_headers_proxy(downstream_request):
+        return (
+            tuple(
+                (key, value)
+                for key, value in downstream_request.headers.items()
+                if key.lower()
+                in required_admin_headers + ("content-length", "content-type", "authorization")
+            )
+            + downstream_request["sso_profile_headers"]
+        )
 
     def mlflow_headers_proxy(downstream_request, jwt):
         return tuple((key, value) for key, value in downstream_request.headers.items()) + (
@@ -293,6 +305,9 @@ async def async_main():
 
     def is_flower_requested(request):
         return request.url.host == f"flower.{root_domain_no_port}"
+    
+    def is_arango_requested(request):
+        return request.url.host == f"arango.{root_domain_no_port}"
 
     def is_mlflow_requested(request):
         return request.url.host.split("--")[0] == "mlflow"
@@ -310,6 +325,7 @@ async def async_main():
             and not is_superset_requested(request)
             and not is_flower_requested(request)
             and not is_mlflow_requested(request)
+            and not is_arango_requested(request)
         )
 
     def is_mirror_requested(request):
@@ -400,6 +416,7 @@ async def async_main():
         mirror_requested = is_mirror_requested(downstream_request)
         superset_requested = is_superset_requested(downstream_request)
         flower_requested = is_flower_requested(downstream_request)
+        arango_requested = is_arango_requested(downstream_request)
         mlflow_requested = is_mlflow_requested(downstream_request)
 
         # Websocket connections
@@ -421,6 +438,8 @@ async def async_main():
                 return await handle_superset(downstream_request, method, path, query)
             if flower_requested:
                 return await handle_flower(downstream_request, method, path, query)
+            if arango_requested:
+                return await handle_arango(downstream_request, method, path, query) 
             if mlflow_requested:
                 return await handle_mlflow(downstream_request, method, path, query)
             return await handle_admin(
@@ -765,6 +784,18 @@ async def async_main():
             downstream_request,
             method,
             CIMultiDict(flower_headers_proxy(downstream_request)),
+            upstream_url,
+            query,
+            await get_data(downstream_request),
+            default_http_timeout,
+        )
+    
+    async def handle_arango(downstream_request, method, path, query):
+        upstream_url = URL(arango_root).with_path(path)
+        return await handle_http(
+            downstream_request,
+            method,
+            CIMultiDict(arango_headers_proxy(downstream_request)),
             upstream_url,
             query,
             await get_data(downstream_request),
@@ -1290,6 +1321,7 @@ async def async_main():
                 or is_requesting_files(request)
                 or is_data_explorer_requested(request)
                 or is_flower_requested(request)
+                or is_arango_requested(request)
             )
 
             if not ip_whitelist_required:
