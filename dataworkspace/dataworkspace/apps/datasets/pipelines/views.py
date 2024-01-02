@@ -126,9 +126,11 @@ class PipelineListView(IsAdminMixin, ListView):
 class PipelineDeleteView(IsAdminMixin, DeleteView):
     model = Pipeline
     template_name = "datasets/pipelines/delete.html"
-    success_url = reverse_lazy("pipelines:index")
 
-    def delete(self, request, *args, **kwargs):
+    def get_success_url(self):
+        return reverse("pipelines:index")
+
+    def post(self, request, *args, **kwargs):
         try:
             delete_pipeline_from_dataflow(self.get_object())
         except RequestException as e:
