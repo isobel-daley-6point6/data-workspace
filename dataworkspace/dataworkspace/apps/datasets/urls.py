@@ -36,11 +36,6 @@ urlpatterns = [
         name="source_table_column_details",
     ),
     path(
-        "<uuid:dataset_uuid>/columns",
-        login_required(views.ReferenceDatasetColumnDetails.as_view()),
-        name="reference_dataset_column_details",
-    ),
-    path(
         "<uuid:dataset_uuid>/grid",
         login_required(views.ReferenceDatasetGridView.as_view()),
         name="reference_dataset_detail",
@@ -186,36 +181,6 @@ urlpatterns = [
         name="subscription_unsubscribe",
     ),
     path(
-        "<uuid:dataset_uuid>/<uuid:source_id>/changelog/",
-        login_required(views.SourceChangelogView.as_view()),
-        {"model_class": models.SourceTable},
-        name="source_table_changelog",
-    ),
-    path(
-        "<uuid:dataset_uuid>/<str:source_id>/changelog/",
-        login_required(views.SourceChangelogView.as_view()),
-        {"model_class": models.CustomDatasetQuery},
-        name="custom_dataset_query_changelog",
-    ),
-    path(
-        "reference/<uuid:dataset_uuid>/changelog/",
-        login_required(views.SourceChangelogView.as_view()),
-        {"model_class": models.ReferenceDataset},
-        name="reference_dataset_changelog",
-    ),
-    path(
-        "<uuid:dataset_uuid>/chart/<int:object_id>/",
-        login_required(views.DatasetChartView.as_view()),
-        {"model_class": models.DataSet},
-        name="dataset_chart",
-    ),
-    path(
-        "<uuid:dataset_uuid>/chart/<int:object_id>/data",
-        login_required(views.DatasetChartDataView.as_view()),
-        {"model_class": models.DataSet},
-        name="dataset_chart_data",
-    ),
-    path(
         "<uuid:pk>/edit-dataset",
         login_required(views.DatasetEditView.as_view()),
         name="edit_dataset",
@@ -289,31 +254,6 @@ urlpatterns = [
         "<uuid:pk>/remove-authorized-user/<int:summary_id>/<int:user_id>",
         login_required(views.DatasetRemoveAuthorisedUserView.as_view()),
         name="remove_authorized_user",
-    ),
-    path(
-        "<uuid:pk>/select-chart-source",
-        login_required(views.SelectChartSourceView.as_view()),
-        name="select_chart_source",
-    ),
-    path(
-        "<uuid:pk>/filter-chart-data/<str:source_id>/",
-        login_required(views.FilterChartDataView.as_view()),
-        name="filter_chart_data",
-    ),
-    path(
-        "<uuid:dataset_uuid>/aggregate-chart-data/<str:source_id>/",
-        login_required(views.AggregateChartDataViewView.as_view()),
-        name="aggregate_chart_data",
-    ),
-    path(
-        "<uuid:dataset_uuid>/grid-chart/<str:source_id>/",
-        login_required(views.CreateGridChartView.as_view()),
-        name="create_chart_from_grid",
-    ),
-    path(
-        "<uuid:dataset_uuid>/charts/",
-        login_required(views.DatasetChartsView.as_view()),
-        name="dataset_charts",
     ),
     path(
         "<uuid:pk>/manage/",

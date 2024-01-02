@@ -17,7 +17,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.contenttypes.models import ContentType
 from django.core import serializers
 from django.core.paginator import Paginator
-from django.db import connections, ProgrammingError
+from django.db import ProgrammingError
 from django.db.models import (
     Count,
     F,
@@ -50,15 +50,12 @@ from django.views.decorators.http import (
 )
 from django.views.generic import DetailView, FormView, TemplateView, UpdateView, View
 from psycopg2 import sql
-from waffle.mixins import WaffleFlagMixin
 
 from dataworkspace import datasets_db
 from dataworkspace.apps.accounts.models import UserDataTableView
 from dataworkspace.apps.api_v1.core.views import invalidate_superset_user_cached_credentials
 from dataworkspace.apps.applications.models import ApplicationInstance
 from dataworkspace.apps.core.boto3_client import get_s3_client
-from dataworkspace.apps.core.charts.models import ChartBuilderChart
-from dataworkspace.apps.core.charts.tasks import run_chart_builder_query
 
 from dataworkspace.apps.core.errors import DatasetPermissionDenied, DatasetPreviewDisabledError
 from dataworkspace.apps.core.utils import (
@@ -74,12 +71,9 @@ from dataworkspace.apps.core.models import (
 from dataworkspace.apps.datasets.constants import (
     DataSetType,
     DataLinkType,
-    AggregationType,
 )
 from dataworkspace.apps.datasets.constants import TagType
 from dataworkspace.apps.datasets.forms import (
-    ChartAggregateForm,
-    ChartSourceSelectForm,
     DatasetEditForm,
     DatasetSearchForm,
     EligibilityCriteriaForm,
@@ -117,7 +111,6 @@ from dataworkspace.apps.datasets.utils import (
     get_code_snippets_for_table,
     get_code_snippets_for_query,
     get_code_snippets_for_reference_table,
-    get_detailed_changelog,
     get_tools_links_for_user,
     get_recently_viewed_catalogue_pages,
 )
@@ -387,7 +380,6 @@ def find_datasets(request):
             "data_type": dict(data_types),
             "show_admin_filters": has_unpublished_dataset_access(request.user)
             and request.user.is_superuser,
-            "DATASET_FINDER_FLAG": settings.DATASET_FINDER_ADMIN_ONLY_FLAG,
             "ACCESSIBLE_AUTOCOMPLETE_FLAG": settings.ACCESSIBLE_AUTOCOMPLETE_FLAG,
             "search_type": "searchBar" if filters.query else "noSearch",
             "has_filters": filters.has_filters(),
@@ -681,13 +673,13 @@ class DatasetDetailView(DetailView):
 
     def get_template_names(self):
         if self._is_reference_dataset():
-            return ["datasets/referencedataset_detail.html"]
+            return ["datasets/details/reference_dataset.html"]
         elif self.object.type == DataSetType.MASTER:
-            return ["datasets/master_dataset.html"]
+            return ["datasets/details/sourceset_dataset.html"]
         elif self.object.type == DataSetType.DATACUT:
-            return ["datasets/data_cut_dataset.html"]
+            return ["datasets/details/data_cut_dataset.html"]
         elif self._is_visualisation():
-            return ["datasets/visualisation_catalogue_item.html"]
+            return ["datasets/details/visualisation_dataset.html"]
 
         raise RuntimeError(f"Unknown template for {self}")
 
@@ -932,22 +924,6 @@ class SourceTableColumnDetails(View):
         )
 
 
-class ReferenceDatasetColumnDetails(View):
-    def get(self, request, dataset_uuid):
-        dataset = find_dataset(dataset_uuid, request.user, ReferenceDataset)
-        columns = datasets_db.get_columns(
-            dataset.external_database.memorable_name,
-            schema="public",
-            table=dataset.table_name,
-            include_types=True,
-        )
-        return render(
-            request,
-            "datasets/referencedataset_column_details.html",
-            context={"dataset": dataset, "columns": columns},
-        )
-
-
 class ReferenceDatasetGridView(View):
     def get(self, request, dataset_uuid):
         dataset = find_dataset(dataset_uuid, request.user, ReferenceDataset)
@@ -1002,7 +978,7 @@ class RelatedDataView(View):
 
             return render(
                 request,
-                "datasets/related_data.html",
+                "datasets/related_content/related_data.html",
                 context={
                     "dataset": dataset,
                     "related_data": related_datasets,
@@ -1025,7 +1001,7 @@ class RelatedVisualisationsView(View):
 
             return render(
                 request,
-                "datasets/related_visualisations.html",
+                "datasets/related_content/related_visualisations.html",
                 context={
                     "dataset": dataset,
                     "related_visualisations": related_visualisations,
@@ -1196,7 +1172,7 @@ class DataSourcesetDetailView(DetailView):
 
 
 class DataCutSourceDetailView(DetailView):
-    template_name = "datasets/data-preview/data_cut_source_preview.html"
+    template_name = "datasets/data-preview/data_cut_preview.html"
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -1464,67 +1440,6 @@ class CustomQueryColumnDetails(View):
         )
 
 
-class SourceChangelogView(WaffleFlagMixin, DetailView):
-    waffle_flag = settings.DATASET_CHANGELOG_PAGE_FLAG
-    template_name = "datasets/source_changelog.html"
-    context_object_name = "source"
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["changelog"] = get_detailed_changelog(self.get_object())
-        return ctx
-
-    def get_object(self, queryset=None):
-        dataset = find_dataset(self.kwargs["dataset_uuid"], self.request.user)
-        if self.kwargs["model_class"] == ReferenceDataset:
-            return dataset
-        return get_object_or_404(
-            self.kwargs["model_class"],
-            dataset=dataset,
-            pk=self.kwargs["source_id"],
-        )
-
-
-class DatasetChartView(WaffleFlagMixin, View):
-    waffle_flag = settings.CHART_BUILDER_PUBLISH_CHARTS_FLAG
-
-    def get_object(self):
-        dataset = find_dataset(
-            self.kwargs["dataset_uuid"], self.request.user, self.kwargs["model_class"]
-        )
-        return dataset.charts.get(id=self.kwargs["object_id"])
-
-    @csp_update(SCRIPT_SRC=["'unsafe-eval'", "blob:"], IMG_SRC=["blob:"])
-    def get(self, request, **kwargs):
-        chart = self.get_object()
-        if not chart.dataset.user_has_access(request.user):
-            return HttpResponseForbidden()
-        return render(
-            request,
-            "datasets/charts/chart.html",
-            context={
-                "chart": chart,
-            },
-        )
-
-
-class DatasetChartDataView(DatasetChartView):
-    waffle_flag = settings.CHART_BUILDER_PUBLISH_CHARTS_FLAG
-
-    def get(self, request, **kwargs):
-        dataset_chart = self.get_object()
-        if not dataset_chart.dataset.user_has_access(request.user):
-            return HttpResponseForbidden()
-        chart = dataset_chart.chart
-        return JsonResponse(
-            {
-                "total_rows": chart.query_log.rows,
-                "duration": chart.query_log.duration,
-                "data": chart.get_table_data(chart.get_required_columns()),
-            }
-        )
-
-
 class EditBaseView(View):
     obj = None
     summary: str = None
@@ -1561,7 +1476,7 @@ class EditBaseView(View):
 class DatasetEditView(EditBaseView, UpdateView):
     model = DataSet
     form_class = DatasetEditForm
-    template_name = "datasets/edit_dataset.html"
+    template_name = "datasets/manage_datasets/edit_dataset.html"
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -1602,7 +1517,7 @@ class DatasetEditView(EditBaseView, UpdateView):
 class VisualisationCatalogueItemEditView(EditBaseView, UpdateView):
     model = VisualisationCatalogueItem
     form_class = VisualisationCatalogueItemEditForm
-    template_name = "datasets/edit_visualisation_catalogue_item.html"
+    template_name = "datasets/manage_datasets/edit_visualisation_catalogue_item.html"
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -1645,7 +1560,7 @@ class VisualisationCatalogueItemEditView(EditBaseView, UpdateView):
 
 @method_decorator(login_required, name="dispatch")
 class DataCatalogueEditorsView(View):
-    template_name = "datasets/edit_data_editors.html"
+    template_name = "datasets/manage_editors/edit_editors.html"
 
     def get(self, request, pk):
         dataset = find_dataset(pk, request.user)
@@ -1882,7 +1797,7 @@ class DatasetEditPermissionsView(EditBaseView, View):
 
 
 class DatasetEditPermissionsSummaryView(EditBaseView, TemplateView):
-    template_name = "datasets/edit_permissions_summary.html"
+    template_name = "datasets/manage_permissions/edit_summary.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2006,212 +1921,6 @@ class DatasetRemoveAuthorisedUserView(EditBaseView, View):
                     self.kwargs.get("summary_id"),
                 ],
             )
-        )
-
-
-class SelectChartSourceView(WaffleFlagMixin, FormView):
-    waffle_flag = settings.CHART_BUILDER_BUILD_CHARTS_FLAG
-    form_class = ChartSourceSelectForm
-    template_name = "datasets/charts/select_chart_source.html"
-
-    def get_object(self, queryset=None):
-        dataset = find_dataset(self.kwargs["pk"], self.request.user, DataSet)
-        if not dataset.user_has_access(self.request.user):
-            raise DatasetPermissionDenied(dataset)
-        return dataset
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["dataset"] = self.get_object()
-        return ctx
-
-    def get_form_kwargs(self):
-        kwargs = super().get_form_kwargs()
-        kwargs["dataset"] = self.get_object()
-        return kwargs
-
-    def form_valid(self, form):
-        dataset = self.get_object()
-        source_id = form.cleaned_data["source"]
-        source = dataset.get_related_source(source_id)
-        if source is None:
-            raise Http404
-        chart = ChartBuilderChart.objects.create_from_source(source, self.request.user)
-        run_chart_builder_query.delay(chart.id)
-        if source.data_grid_enabled:
-            return HttpResponseRedirect(
-                reverse("datasets:filter_chart_data", args=(dataset.id, source.id))
-            )
-        return HttpResponseRedirect(f"{chart.get_edit_url()}?prev={self.request.path}")
-
-
-class FilterChartDataView(WaffleFlagMixin, DetailView):
-    waffle_flag = settings.CHART_BUILDER_BUILD_CHARTS_FLAG
-    form_class = ChartSourceSelectForm
-    template_name = "datasets/charts/filter_chart_data.html"
-    context_object_name = "source"
-
-    def get_object(self, queryset=None):
-        dataset = find_dataset(self.kwargs["pk"], self.request.user, DataSet)
-        if not dataset.user_has_access(self.request.user):
-            raise DatasetPermissionDenied(dataset)
-        source = dataset.get_related_source(self.kwargs["source_id"])
-        if source is None:
-            raise Http404
-        return source
-
-
-class AggregateChartDataViewView(WaffleFlagMixin, View):
-    waffle_flag = settings.CHART_BUILDER_BUILD_CHARTS_FLAG
-
-    def post(self, request, dataset_uuid, source_id, *args, **kwargs):
-        dataset = find_dataset(dataset_uuid, self.request.user)
-        source = dataset.get_related_source(source_id)
-        if source is None:
-            raise Http404
-
-        filters = {}
-        for filter_data in [json.loads(x) for x in request.POST.getlist("filters")]:
-            filters.update(filter_data)
-
-        columns = [
-            x
-            for x in source.get_column_config()
-            if x["field"] in request.POST.getlist("columns", [])
-        ]
-
-        return render(
-            request,
-            "datasets/charts/aggregate.html",
-            context={
-                "dataset": dataset,
-                "source": source,
-                "form": ChartAggregateForm(
-                    columns=columns,
-                    initial={
-                        "columns": columns,
-                        "filters": filters,
-                        "sort_direction": request.POST.get("sortDir", "ASC"),
-                        "sort_field": request.POST.get("sortField", "1"),
-                    },
-                ),
-            },
-        )
-
-
-class CreateGridChartView(WaffleFlagMixin, View):
-    waffle_flag = settings.CHART_BUILDER_BUILD_CHARTS_FLAG
-
-    def post(self, request, dataset_uuid, source_id, *args, **kwargs):
-        dataset = find_dataset(dataset_uuid, self.request.user)
-        source = dataset.get_related_source(source_id)
-        if source is None:
-            raise Http404
-
-        columns = json.loads(request.POST.get("columns"))
-        form = ChartAggregateForm(
-            request.POST,
-            columns=columns,
-            initial={
-                "columns": columns,
-            },
-        )
-
-        if not form.is_valid():
-            # Ideally we would redirect here but we need to keep the json
-            # post data from the grid and so we just re-display the form
-            # to let the user correct errors
-            return render(
-                request,
-                "datasets/charts/aggregate.html",
-                context={
-                    "dataset": dataset,
-                    "source": source,
-                    "form": form,
-                },
-            )
-
-        chart_data = form.cleaned_data
-
-        original_query = source.get_data_grid_query()
-        download_limit = source.data_grid_download_limit
-        if download_limit is None:
-            download_limit = 5000
-
-        _, query, params = build_filtered_dataset_query(
-            original_query,
-            download_limit,
-            json.loads(request.POST.get("columns", "[]")),
-            {
-                "filters": chart_data["filters"],
-                "sortDir": chart_data["sort_direction"],
-                "sortField": chart_data["sort_field"],
-            },
-        )
-
-        if chart_data["aggregate"] != AggregationType.NONE.value:
-            query = (
-                sql.SQL("SELECT {}, {}({}) FROM (").format(
-                    sql.Identifier(chart_data["group_by"]),
-                    sql.Identifier(chart_data["aggregate"]),
-                    sql.Literal("*")
-                    if chart_data["aggregate"] == "count"
-                    else sql.Identifier(chart_data["aggregate_field"]),
-                )
-                + query
-                + sql.SQL(") a ")
-                + sql.SQL("GROUP by 1;")
-            )
-
-        db_name = list(settings.DATABASES_DATA.items())[0][0]
-        with connections[db_name].cursor() as cursor:
-            full_query = cursor.mogrify(query, params).decode()
-
-        chart = ChartBuilderChart.objects.create_from_sql(str(full_query), request.user, db_name)
-        chart.chart_config.update(
-            {
-                "xaxis": {"type": "category", "autorange": True},
-                "yaxis": {"type": "linear", "autorange": True},
-                "traces": [
-                    {
-                        "meta": {
-                            "columnNames": {
-                                "x": chart_data["group_by"],
-                                "y": chart_data["aggregate"],
-                            }
-                        },
-                        "mode": "markers",
-                        "name": "Plot 0",
-                        "type": "bar",
-                        "xsrc": chart_data["group_by"],
-                        "ysrc": chart_data["aggregate"],
-                        "labelsrc": chart_data["group_by"],
-                        "valuesrc": chart_data["aggregate"],
-                    }
-                ],
-            }
-        )
-        chart.save()
-        run_chart_builder_query.delay(chart.id)
-        return HttpResponseRedirect(
-            f"{chart.get_edit_url()}?prev="
-            + reverse("datasets:filter_chart_data", args=(dataset.id, source.id))
-        )
-
-
-class DatasetChartsView(WaffleFlagMixin, View):
-    waffle_flag = settings.CHART_BUILDER_PUBLISH_CHARTS_FLAG
-
-    @csp_update(SCRIPT_SRC=["'unsafe-eval'", "blob:"])
-    def get(self, request, **kwargs):
-        dataset = find_dataset(self.kwargs["dataset_uuid"], self.request.user, DataSet)
-        if not dataset.user_has_access(self.request.user):
-            return HttpResponseForbidden()
-
-        return render(
-            self.request,
-            "datasets/charts/charts.html",
-            context={"charts": dataset.related_charts(), "dataset": dataset},
         )
 
 

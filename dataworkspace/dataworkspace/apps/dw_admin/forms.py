@@ -16,7 +16,6 @@ from django_better_admin_arrayfield.forms.fields import DynamicArrayField
 
 from dataworkspace.apps.datasets.constants import DataSetType
 from dataworkspace.apps.datasets.models import (
-    DataSetChartBuilderChart,
     SensitivityType,
     SourceLink,
     DataSet,
@@ -63,7 +62,7 @@ class ReferenceDatasetForm(AutoCompleteUserFieldsMixin, forms.ModelForm):
             self.fields["information_asset_manager"].required = True
         if "enquiries_contact" in self.fields:
             self.fields["enquiries_contact"].required = True
-        if "sort_field" in self.fields:
+        if "sort_field" in self.fields and self.instance.pk is not None:
             self.fields["sort_field"].queryset = self.instance.fields.all()
 
 
@@ -632,10 +631,6 @@ class SourceViewForm(forms.ModelForm):
 
 class DataSetVisualisationForm(forms.ModelForm):
     model = DataSetVisualisation
-
-
-class DataSetChartBuilderChartForm(forms.ModelForm):
-    model = DataSetChartBuilderChart
 
 
 class SourceTableForm(forms.ModelForm):
